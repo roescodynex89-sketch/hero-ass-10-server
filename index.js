@@ -7,7 +7,7 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 dotenv.config();
 const port = process.env.PORT || 5000;
-// const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+ const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 // CORS Config
 app.use(
@@ -16,6 +16,63 @@ app.use(
     credentials: true,
   }),
 );
+
+
+// WEBHOOK
+
+
+app.post(
+  "/api/webhook",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    const sig = req.headers["stripe-signature"];
+    let event;
+
+    try {
+      event = stripe.webhooks.constructEvent(
+        req.body,
+        sig,
+        process.env.STRIPE_WEBHOOK_SECRET 
+      );
+    } catch (err) {
+      console.error("❌ Webhook error:", err.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+      
+     
+      const { userId, planName } = session.metadata; 
+
+    
+   
+      const db = client.db("ArtHubDB");
+      
+      try {
+        await db
+          .collection("") 
+          .updateOne(
+            { _id: userId }, 
+            { $set: { plan: planName, paymentStatus: "paid" } }
+          );
+        console.log(`✅ Plan updated for user: ${userId}`);
+      } catch (dbErr) {
+        console.error("❌ Database update failed:", dbErr);
+        return res.status(500).json({ error: "Database error" });
+      }
+    }
+
+    res.json({ received: true });
+  }
+);
+
+
+
+
+
+
+
 
 // middleware
 app.use(express.json());
@@ -41,7 +98,7 @@ async function run() {
     const db = client.db("ArtHubDB");
     const artworksCollection = db.collection("artworks");
     const salesCollection = db.collection("sales");
-    const usersCollection = db.collection("profiles"); // প্রোফাইল আপডেটের জন্য
+    const usersCollection = db.collection("profiles"); 
 
     // =========================================================================
     // 📊 1. OVERVIEW STATS ENDPOINT
