@@ -12,7 +12,7 @@ const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 // CORS Config (with credentials enabled for better auth cookies)
 app.use(
   cors({
-    origin: "http://localhost:3000",
+    origin:process.env.CLIENT_URL,
     credentials: true,
   }),
 );
@@ -373,8 +373,8 @@ async function run() {
               },
             ],
             mode: "payment",
-            success_url: `http://localhost:3000/dashboard/user/purchases?success=true`,
-            cancel_url: `http://localhost:3000/artworks/${artworkId}?canceled=true`,
+            success_url: `${process.env.CLIENT_URL}/dashboard/user/purchases?success=true`,
+            cancel_url: `${process.env.CLIENT_URL}/artworks/${artworkId}?canceled=true`,
             metadata: {
               type: "artwork_purchase",
               userEmail: userEmail,
@@ -434,8 +434,8 @@ async function run() {
               },
             ],
             mode: "payment",
-            success_url: `http://localhost:3000/dashboard/user/subscription?success=true`,
-            cancel_url: `http://localhost:3000/dashboard/user/subscription?canceled=true`,
+            success_url: `${process.env.CLIENT_URL}/dashboard/user/subscription?success=true`,
+            cancel_url: `${process.env.CLIENT_URL}/dashboard/user/subscription?canceled=true`,
             metadata: {
               type: "subscription",
               userEmail: userEmail,
