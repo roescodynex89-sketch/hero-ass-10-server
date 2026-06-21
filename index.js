@@ -12,11 +12,11 @@ const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 // CORS Config (with credentials enabled for better auth cookies)
 app.use(
   cors({
-    origin:["http://localhost:3000", process.env.CLIENT_URL],
+    origin: ["http://localhost:3000", process.env.CLIENT_URL],
     credentials: true,
     // methods:["GET","POST","PUT","DELETE","PATCH"],
     // allowedHeaders:["Content-Type","Authorization"],
-  })
+  }),
 );
 
 // DB client
@@ -132,29 +132,21 @@ app.use(cookieParser());
 
 async function verifySession(req, res, next) {
   try {
-
-console.log("===VERIFY SESSION===")
-console.log("cookies",req.cookies)
+    console.log("===VERIFY SESSION===");
+    console.log("cookies", req.cookies);
 
     const sessionToken =
-      req.cookies["better-auth.session_token"] ||
-      req.cookies["__Secure-better-auth.session_token"];
+      req.cookies["better-auth.session-token"] ||
+      req.cookies["__Secure-better-auth.session-token"];
 
-
-
-      console.log("session token",sessionToken)
+    console.log("session token", sessionToken);
     if (!sessionToken) {
-      return res
-        .status(401)
-        .send({
-          message: "Unauthorized access. Active session token missing.",
-        });
+      return res.status(401).send({
+        message: "Unauthorized access. Active session token missing.",
+      });
     }
 
-
-
-
-// 🔍 ডিবাগিং লাইন ১: ডাটাবেজে মোট কয়টি সেশন আছে দেখা
+    // 🔍 ডিবাগিং লাইন ১: ডাটাবেজে মোট কয়টি সেশন আছে দেখা
     const totalSessions = await sessionsCollection.countDocuments({});
     console.log("📊 Total sessions in DB:", totalSessions);
 
@@ -162,35 +154,13 @@ console.log("cookies",req.cookies)
     const sampleSession = await sessionsCollection.findOne({});
     console.log("👀 Sample session from DB:", sampleSession);
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     const sessionDoc = await sessionsCollection.findOne({
-      sessionToken: sessionToken,
+      token: sessionToken,
     });
 
-console.log("found session docs",sessionDoc)
+    console.log("found session docs", sessionDoc);
 
-
-
-
-
-    console.log("Session doc",sessionDoc)
+    console.log("Session doc", sessionDoc);
     if (!sessionDoc || new Date(sessionDoc.expiresAt) < new Date()) {
       return res
         .status(401)
@@ -394,12 +364,10 @@ async function run() {
           }
 
           if (artwork.artistEmail === userEmail) {
-            return res
-              .status(400)
-              .send({
-                message:
-                  "Preclusion violation: Creators cannot purchase their own digital assets.",
-              });
+            return res.status(400).send({
+              message:
+                "Preclusion violation: Creators cannot purchase their own digital assets.",
+            });
           }
 
           const session = await stripe.checkout.sessions.create({
@@ -492,12 +460,10 @@ async function run() {
           res.send({ url: session.url });
         } catch (error) {
           console.error("Subscription Checkout Error:", error);
-          res
-            .status(500)
-            .send({
-              message: "Stripe subscription initialization error",
-              error,
-            });
+          res.status(500).send({
+            message: "Stripe subscription initialization error",
+            error,
+          });
         }
       },
     );
@@ -528,12 +494,10 @@ async function run() {
         });
 
         if (!hasPurchased) {
-          return res
-            .status(403)
-            .send({
-              message:
-                "Critique authorization denied: Only verified owners of this artwork are permitted to comment.",
-            });
+          return res.status(403).send({
+            message:
+              "Critique authorization denied: Only verified owners of this artwork are permitted to comment.",
+          });
         }
 
         const commentData = {
@@ -568,11 +532,9 @@ async function run() {
           return res.status(404).send({ message: "Comment not found." });
 
         if (comment.userEmail !== userEmail) {
-          return res
-            .status(403)
-            .send({
-              message: "Mutation denied: You do not own this comment resource.",
-            });
+          return res.status(403).send({
+            message: "Mutation denied: You do not own this comment resource.",
+          });
         }
 
         const result = await commentsCollection.updateOne(
@@ -631,11 +593,9 @@ async function run() {
         try {
           const email = req.params.email;
           if (req.user.email !== email && req.user.role !== "admin") {
-            return res
-              .status(403)
-              .send({
-                message: "Security Violation: Cross-tenant access forbidden.",
-              });
+            return res.status(403).send({
+              message: "Security Violation: Cross-tenant access forbidden.",
+            });
           }
 
           const totalPurchased = await salesCollection.countDocuments({
@@ -677,11 +637,9 @@ async function run() {
         try {
           const email = req.params.email;
           if (req.user.email !== email && req.user.role !== "admin") {
-            return res
-              .status(403)
-              .send({
-                message: "Security Violation: Cross-tenant access forbidden.",
-              });
+            return res.status(403).send({
+              message: "Security Violation: Cross-tenant access forbidden.",
+            });
           }
 
           const result = await salesCollection
@@ -707,11 +665,9 @@ async function run() {
         try {
           const email = req.params.email;
           if (req.user.email !== email && req.user.role !== "admin") {
-            return res
-              .status(403)
-              .send({
-                message: "Security Violation: Cross-tenant access forbidden.",
-              });
+            return res.status(403).send({
+              message: "Security Violation: Cross-tenant access forbidden.",
+            });
           }
 
           const totalArtworks = await artworksCollection.countDocuments({
@@ -749,11 +705,9 @@ async function run() {
         try {
           const email = req.params.email;
           if (req.user.email !== email && req.user.role !== "admin") {
-            return res
-              .status(403)
-              .send({
-                message: "Security Violation: Cross-tenant access forbidden.",
-              });
+            return res.status(403).send({
+              message: "Security Violation: Cross-tenant access forbidden.",
+            });
           }
 
           const result = await salesCollection
@@ -776,11 +730,9 @@ async function run() {
         try {
           const email = req.params.email;
           if (req.user.email !== email && req.user.role !== "admin") {
-            return res
-              .status(403)
-              .send({
-                message: "Security Violation: Cross-tenant access forbidden.",
-              });
+            return res.status(403).send({
+              message: "Security Violation: Cross-tenant access forbidden.",
+            });
           }
           const result = await artworksCollection
             .find({ artistEmail: email })
@@ -933,11 +885,9 @@ async function run() {
             salesChartData,
           });
         } catch (error) {
-          res
-            .status(500)
-            .send({
-              message: "Error compiling root admin intelligence metrics.",
-            });
+          res.status(500).send({
+            message: "Error compiling root admin intelligence metrics.",
+          });
         }
       },
     );
