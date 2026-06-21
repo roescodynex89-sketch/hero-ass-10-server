@@ -12,9 +12,11 @@ const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 // CORS Config (with credentials enabled for better auth cookies)
 app.use(
   cors({
-    origin:process.env.CLIENT_URL,
+    origin:["http://localhost:3000", process.env.CLIENT_URL],
     credentials: true,
-  }),
+    // methods:["GET","POST","PUT","DELETE","PATCH"],
+    // allowedHeaders:["Content-Type","Authorization"],
+  })
 );
 
 // DB client
@@ -130,10 +132,17 @@ app.use(cookieParser());
 
 async function verifySession(req, res, next) {
   try {
-    const sessionToken =
-      req.cookies["better-auth.session-token"] ||
-      req.cookies["__Secure-better-auth.session-token"];
 
+console.log("===VERIFY SESSION===")
+console.log("cookies",req.cookies)
+
+    const sessionToken =
+      req.cookies["better-auth.session_token"] ||
+      req.cookies["__Secure-better-auth.session_token"];
+
+
+
+      console.log("session token",sessionToken)
     if (!sessionToken) {
       return res
         .status(401)
@@ -142,9 +151,46 @@ async function verifySession(req, res, next) {
         });
     }
 
+
+
+
+// 🔍 ডিবাগিং লাইন ১: ডাটাবেজে মোট কয়টি সেশন আছে দেখা
+    const totalSessions = await sessionsCollection.countDocuments({});
+    console.log("📊 Total sessions in DB:", totalSessions);
+
+    // 🔍 ডিবাগিং লাইন ২: ডাটাবেজের যেকোনো ১টি সেশন কেমন দেখতে তা প্রিন্ট করা
+    const sampleSession = await sessionsCollection.findOne({});
+    console.log("👀 Sample session from DB:", sampleSession);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     const sessionDoc = await sessionsCollection.findOne({
-      token: sessionToken,
+      sessionToken: sessionToken,
     });
+
+console.log("found session docs",sessionDoc)
+
+
+
+
+
+    console.log("Session doc",sessionDoc)
     if (!sessionDoc || new Date(sessionDoc.expiresAt) < new Date()) {
       return res
         .status(401)
