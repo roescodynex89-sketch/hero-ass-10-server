@@ -4,18 +4,17 @@ const dotenv = require("dotenv");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const { jwtVerify, createRemoteJWKSet } = require("jose");
 
 dotenv.config();
 const port = process.env.PORT || 5000;
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
-// CORS Config (with credentials enabled for better auth cookies)
+// CORS Config
 app.use(
   cors({
     origin: ["http://localhost:3000", process.env.CLIENT_URL],
     credentials: true,
-    // methods:["GET","POST","PUT","DELETE","PATCH"],
-    // allowedHeaders:["Content-Type","Authorization"],
   }),
 );
 
@@ -33,12 +32,14 @@ let db,
   artworksCollection,
   salesCollection,
   usersCollection,
-  commentsCollection,
-  sessionsCollection;
+  commentsCollection;
 
-//
+// Better Auth-এর রিকোমেন্ডেড JOSE JWKS সেটআপ
+const JWKS = createRemoteJWKSet(
+  new URL(process.env.BETTER_AUTH_JWKS_URI)
+);
+
 // STRIPE WEBHOOK
-
 app.post(
   "/api/webhook",
   express.raw({ type: "application/json" }),
@@ -127,85 +128,93 @@ app.post(
 app.use(express.json());
 app.use(cookieParser());
 
-// BETTER AUTH AUTHENTICATION & PRIVILEGE MIDDLEWARES
-//
+// ==========================================
+// Better Auth Standard Middlewares (FIXED)
+// ==========================================
 
-async function verifySession(req, res, next) {
+// ১. verifyToken: JOSE দিয়ে Bearer Token এক্সট্রাক্ট এবং ভেরিফাই করা হচ্ছে
+async function verifyToken(req, res, next) {
   try {
-    console.log("===VERIFY SESSION===");
-    console.log("cookies", req.cookies);
-
-    const sessionToken =
-      req.cookies["better-auth.session-token"] ||
-      req.cookies["__Secure-better-auth.session-token"];
-
-    console.log("session token", sessionToken);
-    if (!sessionToken) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return res.status(401).send({
-        message: "Unauthorized access. Active session token missing.",
+        message: "Unauthorized access. Bearer token missing in headers.",
       });
     }
 
-    // 🔍 ডিবাগিং লাইন ১: ডাটাবেজে মোট কয়টি সেশন আছে দেখা
-    const totalSessions = await sessionsCollection.countDocuments({});
-    console.log("📊 Total sessions in DB:", totalSessions);
+    const token = authHeader.split(" ")[1];
 
-    // 🔍 ডিবাগিং লাইন ২: ডাটাবেজের যেকোনো ১টি সেশন কেমন দেখতে তা প্রিন্ট করা
-    const sampleSession = await sessionsCollection.findOne({});
-    console.log("👀 Sample session from DB:", sampleSession);
+    // JOSE ব্যবহার করে টোকেন ভ্যালিডেশন (Issuer এবং Audience চেকিং সহ)
+    const { payload } = await jwtVerify(token, JWKS, {
+      issuer: process.env.BETTER_AUTH_ISSUER,
+     
+// remove
 
-    const sessionDoc = await sessionsCollection.findOne({
-      token: sessionToken,
+
     });
 
-    console.log("found session docs", sessionDoc);
-
-    console.log("Session doc", sessionDoc);
-    if (!sessionDoc || new Date(sessionDoc.expiresAt) < new Date()) {
-      return res
-        .status(401)
-        .send({ message: "Session expired or invalid token structure." });
-    }
-
-    let userQuery = {};
-    if (ObjectId.isValid(sessionDoc.userId)) {
-      userQuery = { _id: new ObjectId(sessionDoc.userId) };
-    } else {
-      userQuery = { _id: sessionDoc.userId };
-    }
-
-    const userDoc = await usersCollection.findOne(userQuery);
-    if (!userDoc) {
-      return res
-        .status(404)
-        .send({ message: "User workspace node not established in database." });
-    }
-
-    req.user = {
-      id: userDoc._id,
-      name: userDoc.name,
-      email: userDoc.email,
-      role: userDoc.role || "user",
-      plan: userDoc.plan || "Free",
-    };
-
+    // JWT Payload-কে req.user-এ সেট করা হচ্ছে
+    req.user = payload;
     next();
   } catch (error) {
-    console.error("Session verification crash:", error);
-    return res.status(500).send({ message: "Internal Auth Gateway error." });
+    console.error("Token verification error:", error.message);
+    return res.status(401).send({ message: "Invalid or expired token." });
   }
 }
 
+// ২. verifyRole: রিয়েল-টাইম ডাটাবেজ চেক এবং Payload বনাম DB ডাটা সেপারেশন
 function verifyRole(allowedRoles) {
-  return (req, res, next) => {
-    if (!req.user || !allowedRoles.includes(req.user.role)) {
-      return res
-        .status(403)
-        .send({ message: "Forbidden Access. Required privileges missing." });
+  return async (req, res, next) => {
+    try {
+      if (!req.user) {
+        return res.status(401).send({ message: "Unauthorized. User session missing." });
+      }
+
+      // ভিন্ন সংস্করণ বা কাস্টম ক্লেমের জন্য মড্যুলার ইমেইল এক্সট্রাকশন
+      const email = req.user.email || req.user.user?.email || req.user.sub;
+
+      if (!email) {
+        return res.status(401).send({
+          message: "Unauthorized. Email claim not established in token.",
+        });
+      }
+
+      // ডাটাবেজ থেকে সর্বশেষ প্রোফাইল নিয়ে আসা
+      const userDoc = await usersCollection.findOne({ email });
+      if (!userDoc) {
+        return res.status(404).send({
+          message: "User workspace node not established in database.",
+        });
+      }
+
+      // প্রোডাকশন রিকোমেন্ডেশন অনুযায়ী JWT Payload এবং DB ডাটা আলাদা রাখা হচ্ছে
+      req.auth = req.user; // Original JWT Payload
+
+      req.user = {
+        id: userDoc._id,
+        name: userDoc.name,
+        email: userDoc.email,
+        role: userDoc.role || "user",
+        plan: userDoc.plan || "Free",
+      };
+
+      if (!allowedRoles.includes(req.user.role)) {
+        return res
+          .status(403)
+          .send({ message: "Forbidden Access. Required privileges missing." });
+      }
+
+      next();
+    } catch (error) {
+      console.error("Role authorization crash:", error);
+      return res.status(500).send({ message: "Internal Access Control error." });
     }
-    next();
   };
 }
+
+// ==========================================
+// ROUTES & CORE PIPELINE
+// ==========================================
 
 async function run() {
   try {
@@ -216,10 +225,8 @@ async function run() {
     salesCollection = db.collection("sales");
     usersCollection = db.collection("profiles");
     commentsCollection = db.collection("comments");
-    sessionsCollection = db.collection("session");
 
     // PUBLIC ARTWORKS ENDPOINTS (WITH PAGINATION)
-
     app.get("/api/public/artworks", async (req, res) => {
       try {
         const {
@@ -346,11 +353,11 @@ async function run() {
       }
     });
 
-    // STRIPE CHECKOUT SESSION (OWN ARTWORK BUY BLOCK)
-
+    // STRIPE CHECKOUT SESSION
     app.post(
       "/api/create-checkout-session",
-      verifySession,
+      verifyToken,
+      verifyRole(["user","artist","admin"]),
       async (req, res) => {
         try {
           const { artworkId } = req.body;
@@ -409,14 +416,14 @@ async function run() {
       },
     );
 
-    //  SUBSCRIPTION CHECKOUT SESSION FOR PREMIUM TIERS
-
+    // SUBSCRIPTION CHECKOUT SESSION
     app.post(
       "/api/create-subscription-session",
-      verifySession,
+      verifyToken,
+      verifyRole(["user","artist","admin"]),
       async (req, res) => {
         try {
-          const { planName } = req.body; // 'pro' or 'premium'
+          const { planName } = req.body;
           const userEmail = req.user.email;
 
           if (
@@ -468,8 +475,7 @@ async function run() {
       },
     );
 
-    // COMMENTS ROUTE WITH OWNERSHIP & PURCHASE CONTROL
-
+    // COMMENTS ROUTE
     app.get("/api/comments/:artworkId", async (req, res) => {
       try {
         const result = await commentsCollection
@@ -482,7 +488,7 @@ async function run() {
       }
     });
 
-    app.post("/api/comments", verifySession, async (req, res) => {
+    app.post("/api/comments", verifyToken,verifyRole(["user","artist","admin"]), async (req, res) => {
       try {
         const { artworkId, text, userImage } = req.body;
         const userEmail = req.user.email;
@@ -515,8 +521,7 @@ async function run() {
       }
     });
 
-    // 2.cmnt edit (PATCH - Challenge Feature)
-    app.patch("/api/comments/:id", verifySession, async (req, res) => {
+    app.patch("/api/comments/:id", verifyToken,verifyRole(["user","artist","admin"]), async (req, res) => {
       try {
         const commentId = req.params.id;
         const { text } = req.body;
@@ -553,8 +558,7 @@ async function run() {
       }
     });
 
-    // cmnt delete
-    app.delete("/api/comments/:id", verifySession, async (req, res) => {
+    app.delete("/api/comments/:id", verifyToken,verifyRole(["user","artist","admin"]), async (req, res) => {
       try {
         const commentId = req.params.id;
         const userEmail = req.user.email;
@@ -583,11 +587,10 @@ async function run() {
       }
     });
 
-    //  USER PRIVATE DASHBOARD (OWNERSHIP ENFORCED)
-
+    // USER DASHBOARD
     app.get(
       "/api/user/stats/:email",
-      verifySession,
+      verifyToken,
       verifyRole(["user", "artist", "admin"]),
       async (req, res) => {
         try {
@@ -631,8 +634,8 @@ async function run() {
 
     app.get(
       "/api/user/purchases/:email",
-      verifySession,
-      verifyRole(["user", "admin"]),
+      verifyToken,
+      verifyRole(["user", "admin","artist"]),
       async (req, res) => {
         try {
           const email = req.params.email;
@@ -655,11 +658,10 @@ async function run() {
       },
     );
 
-    //  ARTIST PRIVATE DASHBOARD (OWNERSHIP ENFORCED)
-
+    // ARTIST DASHBOARD
     app.get(
       "/api/artist/stats/:email",
-      verifySession,
+      verifyToken,
       verifyRole(["artist", "admin"]),
       async (req, res) => {
         try {
@@ -699,7 +701,7 @@ async function run() {
 
     app.get(
       "/api/artist/sales/:email",
-      verifySession,
+      verifyToken,
       verifyRole(["artist", "admin"]),
       async (req, res) => {
         try {
@@ -724,7 +726,7 @@ async function run() {
 
     app.get(
       "/api/artist/artworks/:email",
-      verifySession,
+      verifyToken,
       verifyRole(["artist", "admin"]),
       async (req, res) => {
         try {
@@ -746,7 +748,7 @@ async function run() {
 
     app.post(
       "/api/artworks",
-      verifySession,
+      verifyToken,
       verifyRole(["artist"]),
       async (req, res) => {
         try {
@@ -767,7 +769,7 @@ async function run() {
 
     app.put(
       "/api/artwork/:id",
-      verifySession,
+      verifyToken,
       verifyRole(["artist"]),
       async (req, res) => {
         try {
@@ -792,7 +794,7 @@ async function run() {
 
     app.delete(
       "/api/artist/artworks/:id",
-      verifySession,
+      verifyToken,
       verifyRole(["artist"]),
       async (req, res) => {
         try {
@@ -809,8 +811,9 @@ async function run() {
     );
 
     // PROFILE CONTROL
-
-    app.put("/api/user/profile/:email", verifySession, async (req, res) => {
+    app.put("/api/user/profile/:email", 
+      verifyToken, 
+      verifyRole(["user","artist","admin"]), async (req, res) => {
       try {
         if (req.user.email !== req.params.email) {
           return res
@@ -835,11 +838,10 @@ async function run() {
       }
     });
 
-    //  ADMIN DASHBOARD METRICS & PRIVILEGED PROTECTION
-
+    // ADMIN DASHBOARD
     app.get(
       "/api/admin/stats",
-      verifySession,
+      verifyToken,
       verifyRole(["admin"]),
       async (req, res) => {
         try {
@@ -894,7 +896,7 @@ async function run() {
 
     app.get(
       "/api/admin/users",
-      verifySession,
+      verifyToken,
       verifyRole(["admin"]),
       async (req, res) => {
         try {
@@ -908,7 +910,7 @@ async function run() {
 
     app.patch(
       "/api/admin/users/role/:id",
-      verifySession,
+      verifyToken,
       verifyRole(["admin"]),
       async (req, res) => {
         try {
@@ -926,7 +928,7 @@ async function run() {
 
     app.delete(
       "/api/admin/artworks/:id",
-      verifySession,
+      verifyToken,
       verifyRole(["admin"]),
       async (req, res) => {
         try {
@@ -943,7 +945,7 @@ async function run() {
 
     app.get(
       "/api/admin/transactions",
-      verifySession,
+      verifyToken,
       verifyRole(["admin"]),
       async (req, res) => {
         try {
@@ -965,7 +967,7 @@ async function run() {
       "🎯 Successfully linked to ArtHub Central Clusters on MongoDB!",
     );
   } finally {
-    // Pipeline remains online
+    // Pipeline online
   }
 }
 run().catch(console.dir);
