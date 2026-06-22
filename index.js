@@ -37,97 +37,11 @@ let db,
 // Better Auth-এর  JOSE JWKS
 const JWKS = createRemoteJWKSet(new URL(process.env.BETTER_AUTH_JWKS_URI));
 
-// STRIPE WEBHOOK
-app.post(
-  "/api/webhook",
-  express.raw({ type: "application/json" }),
-  async (req, res) => {
-    const sig = req.headers["stripe-signature"];
-    let event;
-
-    try {
-      event = stripe.webhooks.constructEvent(
-        req.body,
-        sig,
-        process.env.STRIPE_WEBHOOK_SECRET,
-      );
-    } catch (err) {
-      console.error("❌ Webhook error:", err.message);
-      return res.status(400).send(`Webhook Error: ${err.message}`);
-    }
-
-    const currentDb = client.db("ArtHubDB");
-
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
-      const {
-        userEmail,
-        planName,
-        type,
-        artworkId,
-        title,
-        price,
-        artistEmail,
-        artistName,
-        imageUrl,
-      } = session.metadata;
-
-      try {
-        if (type === "subscription") {
-          await currentDb
-            .collection("user")
-            .updateOne(
-              { email: userEmail },
-              { $set: { plan: planName, paymentStatus: "paid" } },
-              { upsert: true },
-            );
-
-          const actualPrice = planName.toLowerCase() === "pro" ? 9.99 : 19.99;
-
-          await currentDb.collection("sales").insertOne({
-            type: "subscription",
-            planName,
-            buyerEmail: userEmail,
-            price: actualPrice,
-            purchaseDate: new Date().toISOString(),
-          });
-          console.log(
-            `✅ Subscription plan updated to [${planName}] with price [$${actualPrice}] for user: ${userEmail}`,
-          );
-        } else if (type === "artwork_purchase") {
-          const salesDoc = {
-            type: "artwork_purchase",
-            artworkId,
-            title,
-            price: Number(price),
-            buyerEmail: userEmail,
-            artistEmail,
-            artistName,
-            imageUrl,
-            purchaseDate: new Date().toISOString(),
-          };
-
-          await currentDb.collection("sales").insertOne(salesDoc);
-          console.log(
-            `✅ Artwork [${title}] successfully purchased by ${userEmail}`,
-          );
-        }
-      } catch (dbErr) {
-        console.error("❌ Database update failed inside Webhook:", dbErr);
-        return res.status(500).json({ error: "Database error" });
-      }
-    }
-
-    res.json({ received: true });
-  },
-);
-
 // Body Parsers Middlewares
 app.use(express.json());
 app.use(cookieParser());
 
-
-// Better Auth Standard Middlewares 
+// Better Auth Standard Middlewares
 // ==========================================
 
 // verifytoken
@@ -143,10 +57,8 @@ async function verifyToken(req, res, next) {
 
     const token = authHeader.split(" ")[1];
 
-    
     const { payload } = await jwtVerify(token, JWKS, {});
 
-    
     req.user = payload;
     next();
   } catch (error) {
@@ -154,7 +66,6 @@ async function verifyToken(req, res, next) {
     return res.status(401).send({ message: "Invalid or expired token." });
   }
 }
-
 
 function verifyRole(allowedRoles) {
   return async (req, res, next) => {
@@ -165,7 +76,6 @@ function verifyRole(allowedRoles) {
           .send({ message: "Unauthorized. User session missing." });
       }
 
-      
       const email = req.user.email || req.user.user?.email || req.user.sub;
 
       if (!email) {
@@ -174,7 +84,6 @@ function verifyRole(allowedRoles) {
         });
       }
 
-      
       const userDoc = await usersCollection.findOne({ email });
       if (!userDoc) {
         return res.status(404).send({
@@ -210,7 +119,7 @@ function verifyRole(allowedRoles) {
 
 // ==========================================
 // ROUTES & CORE PIPELINE
-// ==========================================
+// ====================================================================================
 
 async function run() {
   try {
@@ -349,6 +258,14 @@ async function run() {
       }
     });
 
+
+
+
+
+
+
+
+
     // STRIPE CHECKOUT SESSION
     app.post(
       "/api/create-checkout-session",
@@ -390,18 +307,11 @@ async function run() {
               },
             ],
             mode: "payment",
-            success_url: `${process.env.CLIENT_URL}/dashboard/user/purchases?success=true`,
+
+            success_url: `${process.env.CLIENT_URL}/purchase-success?artworkId=${artworkId}`,
+
             cancel_url: `${process.env.CLIENT_URL}/artworks/${artworkId}?canceled=true`,
-            metadata: {
-              type: "artwork_purchase",
-              userEmail: userEmail,
-              artworkId: artworkId,
-              title: artwork.title,
-              price: artwork.price.toString(),
-              artistEmail: artwork.artistEmail,
-              artistName: artwork.artistName,
-              imageUrl: artwork.imageUrl,
-            },
+          
           });
 
           res.send({ url: session.url });
@@ -412,64 +322,98 @@ async function run() {
       },
     );
 
-    // SUBSCRIPTION CHECKOUT SESSION
     app.post(
-      "/api/create-subscription-session",
+      "/api/user/buy-artwork",
       verifyToken,
       verifyRole(["user", "artist", "admin"]),
       async (req, res) => {
         try {
-          const { planName } = req.body;
-          const userEmail = req.user.email;
+          const { artworkId } = req.body;
 
-          if (
-            !planName ||
-            !["pro", "premium"].includes(planName.toLowerCase())
-          ) {
-            return res
-              .status(400)
-              .send({ message: "Invalid subscription tier parameter." });
+          // ১. ডাটাবেজ থেকে আর্টওয়ার্কের আসল তথ্য খুঁজে বের করা (ভেরিফিকেশন)
+          const artwork = await artworksCollection.findOne({
+            _id: new ObjectId(artworkId),
+          });
+          if (!artwork) {
+            return res.status(404).send({ message: "Artwork not found" });
           }
 
-          const priceAmount = planName.toLowerCase() === "pro" ? 9.99 : 19.99;
-          const formattedPlanTitle =
-            planName.charAt(0).toUpperCase() + planName.slice(1);
+          // ২. সেলস ডাটা তৈরি করা
+          const salesDoc = {
+            type: "artwork_purchase",
+            artworkId: artwork._id.toString(),
+            title: artwork.title,
+            price: Number(artwork.price),
+            buyerEmail: req.user.email, // টোকেন থেকে অটোমেটিক ইমেইল আসবে
+            artistEmail: artwork.artistEmail,
+            artistName: artwork.artistName,
+            imageUrl: artwork.imageUrl,
+            purchaseDate: new Date().toISOString(),
+          };
 
-          const session = await stripe.checkout.sessions.create({
-            payment_method_types: ["card"],
-            line_items: [
-              {
-                price_data: {
-                  currency: "usd",
-                  product_data: {
-                    name: `ArtHub ${formattedPlanTitle} Membership Access`,
-                    description: `Unlock advanced allocations and expand digital collection nodes up to ${planName.toLowerCase() === "pro" ? "9 items" : "unlimited assets"}.`,
-                  },
-                  unit_amount: Math.round(priceAmount * 100),
-                },
-                quantity: 1,
-              },
-            ],
-            mode: "payment",
-            success_url: `${process.env.CLIENT_URL}/dashboard/user/subscription?success=true`,
-            cancel_url: `${process.env.CLIENT_URL}/dashboard/user/subscription?canceled=true`,
-            metadata: {
-              type: "subscription",
-              userEmail: userEmail,
-              planName: formattedPlanTitle,
-            },
-          });
-
-          res.send({ url: session.url });
+          // ৩. DB Save (sales collection insert)
+          const result = await salesCollection.insertOne(salesDoc);
+          res.send({ success: true, result });
         } catch (error) {
-          console.error("Subscription Checkout Error:", error);
-          res.status(500).send({
-            message: "Stripe subscription initialization error",
-            error,
-          });
+          console.error("Purchase save error:", error);
+          res.status(500).send({ message: "Purchase save failed" });
         }
       },
     );
+
+    // SUBSCRIPTION CHECKOUT SESSION
+
+    app.post("/api/subscription-success", verifyToken, async (req, res) => {
+      try {
+        const { planName } = req.body;
+        const userEmail = req.user.email; // টোকেন থেকে ইউজারের ইমেইল
+
+        if (!planName) {
+          return res.status(400).send({ message: "Plan name is required" });
+        }
+
+        // প্ল্যানের নামের প্রথম অক্ষর বড় হাতের করা (যেমন: Pro, Premium)
+        const formattedPlanTitle =
+          planName.charAt(0).toUpperCase() + planName.slice(1);
+
+        // ১. DB Update (users collection এ ইউজারের plan আপডেট করা)
+        await usersCollection.updateOne(
+          { email: userEmail },
+          { $set: { plan: formattedPlanTitle } },
+        );
+
+        // প্ল্যান অনুযায়ী প্রাইজ নির্ধারণ করা
+        const actualPrice = planName.toLowerCase() === "pro" ? 9.99 : 19.99;
+
+        // ২. DB Insert (sales collection এ সাবস্ক্রিপশনের ট্রানজেকশন রাখা)
+        const subscriptionDoc = {
+          type: "subscription",
+          planName: formattedPlanTitle,
+          buyerEmail: userEmail,
+          price: actualPrice,
+          purchaseDate: new Date().toISOString(),
+        };
+        await salesCollection.insertOne(subscriptionDoc);
+
+        res.send({ success: true });
+      } catch (error) {
+        console.error("Subscription update error:", error);
+        res.status(500).send({ message: "Subscription update failed" });
+      }
+    });
+
+
+
+
+
+
+
+
+
+
+
+
+    // --------------------------------------------------------------------
 
     // COMMENTS ROUTE
     app.get("/api/comments/:artworkId", async (req, res) => {
