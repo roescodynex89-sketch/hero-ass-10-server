@@ -261,12 +261,10 @@ async function run() {
 
 
 
+// ------------------------------------------------------------------
 
 
-
-
-
-    // STRIPE CHECKOUT SESSION
+// STRIPE CHECKOUT SESSION
     app.post(
       "/api/create-checkout-session",
       verifyToken,
@@ -405,15 +403,46 @@ async function run() {
 
 
 
+// SUBSCRIPTION CHECKOUT SESSION (EXPRESS BACKEND)
+    app.post(
+      "/api/create-subscription-checkout",
+      verifyToken,
+      async (req, res) => {
+        try {
+          const { planName } = req.body;
+          const userEmail = req.user.email; 
+
+          
+          let priceId = "";
+          if (planName.toLowerCase() === "pro") {
+            priceId = "price_1TkMLsAm4G5oPHojlcJOSv8N"; 
+          } else if (planName.toLowerCase() === "premium") {
+            priceId = "price_1TkMLsAm4G5oPHojlcJOSv8N"; 
+          }
+
+          if (!priceId) {
+            return res.status(400).send({ message: "Invalid plan name or missing Price ID" });
+          }
+
+          const session = await stripe.checkout.sessions.create({
+            mode: "subscription",
+            payment_method_types: ["card"],
+            line_items: [{ price: priceId, quantity: 1 }],
+            success_url: `${process.env.CLIENT_URL}/subscription-success?planName=${planName}`,
+            cancel_url: `${process.env.CLIENT_URL}/pricing`,
+            metadata: { userEmail, planName },
+          });
+
+          res.send({ url: session.url });
+        } catch (error) {
+          console.error("Stripe Subscription Error:", error);
+          res.status(500).send({ message: "Stripe subscription session failed", error: error.message });
+        }
+      }
+    );
 
 
-
-
-
-
-
-
-    // --------------------------------------------------------------------
+// --------------------------------------------------------------------
 
     // COMMENTS ROUTE
     app.get("/api/comments/:artworkId", async (req, res) => {
