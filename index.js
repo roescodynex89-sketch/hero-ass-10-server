@@ -34,10 +34,8 @@ let db,
   usersCollection,
   commentsCollection;
 
-// Better Auth-এর রিকোমেন্ডেড JOSE JWKS সেটআপ
-const JWKS = createRemoteJWKSet(
-  new URL(process.env.BETTER_AUTH_JWKS_URI)
-);
+// Better Auth-এর  JOSE JWKS
+const JWKS = createRemoteJWKSet(new URL(process.env.BETTER_AUTH_JWKS_URI));
 
 // STRIPE WEBHOOK
 app.post(
@@ -77,7 +75,7 @@ app.post(
       try {
         if (type === "subscription") {
           await currentDb
-            .collection("profiles")
+            .collection("user")
             .updateOne(
               { email: userEmail },
               { $set: { plan: planName, paymentStatus: "paid" } },
@@ -128,11 +126,12 @@ app.post(
 app.use(express.json());
 app.use(cookieParser());
 
-// ==========================================
-// Better Auth Standard Middlewares (FIXED)
+
+// Better Auth Standard Middlewares 
 // ==========================================
 
-// ১. verifyToken: JOSE দিয়ে Bearer Token এক্সট্রাক্ট এবং ভেরিফাই করা হচ্ছে
+// verifytoken
+
 async function verifyToken(req, res, next) {
   try {
     const authHeader = req.headers.authorization;
@@ -144,16 +143,10 @@ async function verifyToken(req, res, next) {
 
     const token = authHeader.split(" ")[1];
 
-    // JOSE ব্যবহার করে টোকেন ভ্যালিডেশন (Issuer এবং Audience চেকিং সহ)
-    const { payload } = await jwtVerify(token, JWKS, {
-      issuer: process.env.BETTER_AUTH_ISSUER,
-     
-// remove
+    
+    const { payload } = await jwtVerify(token, JWKS, {});
 
-
-    });
-
-    // JWT Payload-কে req.user-এ সেট করা হচ্ছে
+    
     req.user = payload;
     next();
   } catch (error) {
@@ -162,15 +155,17 @@ async function verifyToken(req, res, next) {
   }
 }
 
-// ২. verifyRole: রিয়েল-টাইম ডাটাবেজ চেক এবং Payload বনাম DB ডাটা সেপারেশন
+
 function verifyRole(allowedRoles) {
   return async (req, res, next) => {
     try {
       if (!req.user) {
-        return res.status(401).send({ message: "Unauthorized. User session missing." });
+        return res
+          .status(401)
+          .send({ message: "Unauthorized. User session missing." });
       }
 
-      // ভিন্ন সংস্করণ বা কাস্টম ক্লেমের জন্য মড্যুলার ইমেইল এক্সট্রাকশন
+      
       const email = req.user.email || req.user.user?.email || req.user.sub;
 
       if (!email) {
@@ -179,7 +174,7 @@ function verifyRole(allowedRoles) {
         });
       }
 
-      // ডাটাবেজ থেকে সর্বশেষ প্রোফাইল নিয়ে আসা
+      
       const userDoc = await usersCollection.findOne({ email });
       if (!userDoc) {
         return res.status(404).send({
@@ -187,7 +182,6 @@ function verifyRole(allowedRoles) {
         });
       }
 
-      // প্রোডাকশন রিকোমেন্ডেশন অনুযায়ী JWT Payload এবং DB ডাটা আলাদা রাখা হচ্ছে
       req.auth = req.user; // Original JWT Payload
 
       req.user = {
@@ -207,7 +201,9 @@ function verifyRole(allowedRoles) {
       next();
     } catch (error) {
       console.error("Role authorization crash:", error);
-      return res.status(500).send({ message: "Internal Access Control error." });
+      return res
+        .status(500)
+        .send({ message: "Internal Access Control error." });
     }
   };
 }
@@ -223,7 +219,7 @@ async function run() {
     db = client.db("ArtHubDB");
     artworksCollection = db.collection("artworks");
     salesCollection = db.collection("sales");
-    usersCollection = db.collection("profiles");
+    usersCollection = db.collection("user");
     commentsCollection = db.collection("comments");
 
     // PUBLIC ARTWORKS ENDPOINTS (WITH PAGINATION)
@@ -357,7 +353,7 @@ async function run() {
     app.post(
       "/api/create-checkout-session",
       verifyToken,
-      verifyRole(["user","artist","admin"]),
+      verifyRole(["user", "artist", "admin"]),
       async (req, res) => {
         try {
           const { artworkId } = req.body;
@@ -420,7 +416,7 @@ async function run() {
     app.post(
       "/api/create-subscription-session",
       verifyToken,
-      verifyRole(["user","artist","admin"]),
+      verifyRole(["user", "artist", "admin"]),
       async (req, res) => {
         try {
           const { planName } = req.body;
@@ -488,104 +484,119 @@ async function run() {
       }
     });
 
-    app.post("/api/comments", verifyToken,verifyRole(["user","artist","admin"]), async (req, res) => {
-      try {
-        const { artworkId, text, userImage } = req.body;
-        const userEmail = req.user.email;
+    app.post(
+      "/api/comments",
+      verifyToken,
+      verifyRole(["user", "artist", "admin"]),
+      async (req, res) => {
+        try {
+          const { artworkId, text, userImage } = req.body;
+          const userEmail = req.user.email;
 
-        const hasPurchased = await salesCollection.findOne({
-          buyerEmail: userEmail,
-          artworkId: artworkId,
-          type: "artwork_purchase",
-        });
-
-        if (!hasPurchased) {
-          return res.status(403).send({
-            message:
-              "Critique authorization denied: Only verified owners of this artwork are permitted to comment.",
+          const hasPurchased = await salesCollection.findOne({
+            buyerEmail: userEmail,
+            artworkId: artworkId,
+            type: "artwork_purchase",
           });
+
+          if (!hasPurchased) {
+            return res.status(403).send({
+              message:
+                "Critique authorization denied: Only verified owners of this artwork are permitted to comment.",
+            });
+          }
+
+          const commentData = {
+            artworkId,
+            userName: req.user.name,
+            userImage: userImage || "",
+            userEmail: userEmail,
+            text,
+            createdAt: new Date().toISOString(),
+          };
+          const result = await commentsCollection.insertOne(commentData);
+          res.status(201).send({ _id: result.insertedId, ...commentData });
+        } catch (error) {
+          res.status(500).send({ message: "Error publishing comment" });
         }
+      },
+    );
 
-        const commentData = {
-          artworkId,
-          userName: req.user.name,
-          userImage: userImage || "",
-          userEmail: userEmail,
-          text,
-          createdAt: new Date().toISOString(),
-        };
-        const result = await commentsCollection.insertOne(commentData);
-        res.status(201).send({ _id: result.insertedId, ...commentData });
-      } catch (error) {
-        res.status(500).send({ message: "Error publishing comment" });
-      }
-    });
+    app.patch(
+      "/api/comments/:id",
+      verifyToken,
+      verifyRole(["user", "artist", "admin"]),
+      async (req, res) => {
+        try {
+          const commentId = req.params.id;
+          const { text } = req.body;
+          const userEmail = req.user.email;
 
-    app.patch("/api/comments/:id", verifyToken,verifyRole(["user","artist","admin"]), async (req, res) => {
-      try {
-        const commentId = req.params.id;
-        const { text } = req.body;
-        const userEmail = req.user.email;
+          if (!ObjectId.isValid(commentId))
+            return res.status(400).send({ message: "Invalid Comment ID." });
 
-        if (!ObjectId.isValid(commentId))
-          return res.status(400).send({ message: "Invalid Comment ID." });
-
-        const comment = await commentsCollection.findOne({
-          _id: new ObjectId(commentId),
-        });
-        if (!comment)
-          return res.status(404).send({ message: "Comment not found." });
-
-        if (comment.userEmail !== userEmail) {
-          return res.status(403).send({
-            message: "Mutation denied: You do not own this comment resource.",
+          const comment = await commentsCollection.findOne({
+            _id: new ObjectId(commentId),
           });
-        }
+          if (!comment)
+            return res.status(404).send({ message: "Comment not found." });
 
-        const result = await commentsCollection.updateOne(
-          { _id: new ObjectId(commentId) },
-          {
-            $set: {
-              text: text,
-              isEdited: true,
-              updatedAt: new Date().toISOString(),
+          if (comment.userEmail !== userEmail) {
+            return res.status(403).send({
+              message: "Mutation denied: You do not own this comment resource.",
+            });
+          }
+
+          const result = await commentsCollection.updateOne(
+            { _id: new ObjectId(commentId) },
+            {
+              $set: {
+                text: text,
+                isEdited: true,
+                updatedAt: new Date().toISOString(),
+              },
             },
-          },
-        );
-        res.send({ success: true, result });
-      } catch (error) {
-        res.status(500).send({ message: "Error updating comment.", error });
-      }
-    });
-
-    app.delete("/api/comments/:id", verifyToken,verifyRole(["user","artist","admin"]), async (req, res) => {
-      try {
-        const commentId = req.params.id;
-        const userEmail = req.user.email;
-
-        if (!ObjectId.isValid(commentId))
-          return res.status(400).send({ message: "Invalid Comment ID." });
-
-        const comment = await commentsCollection.findOne({
-          _id: new ObjectId(commentId),
-        });
-        if (!comment)
-          return res.status(404).send({ message: "Comment not found." });
-
-        if (comment.userEmail !== userEmail) {
-          return res
-            .status(403)
-            .send({ message: "Purge denied: You do not own this comment." });
+          );
+          res.send({ success: true, result });
+        } catch (error) {
+          res.status(500).send({ message: "Error updating comment.", error });
         }
+      },
+    );
 
-        const result = await commentsCollection.deleteOne({
-          _id: new ObjectId(commentId),
-        });
-        res.send({ success: true, result });
-      } catch (error) {
-        res.status(500).send({ message: "Error purging comment.", error });
-      }
-    });
+    app.delete(
+      "/api/comments/:id",
+      verifyToken,
+      verifyRole(["user", "artist", "admin"]),
+      async (req, res) => {
+        try {
+          const commentId = req.params.id;
+          const userEmail = req.user.email;
+
+          if (!ObjectId.isValid(commentId))
+            return res.status(400).send({ message: "Invalid Comment ID." });
+
+          const comment = await commentsCollection.findOne({
+            _id: new ObjectId(commentId),
+          });
+          if (!comment)
+            return res.status(404).send({ message: "Comment not found." });
+
+          if (comment.userEmail !== userEmail) {
+            return res
+              .status(403)
+              .send({ message: "Purge denied: You do not own this comment." });
+          }
+
+          const result = await commentsCollection.deleteOne({
+            _id: new ObjectId(commentId),
+          });
+          res.send({ success: true, result });
+        } catch (error) {
+          res.status(500).send({ message: "Error purging comment.", error });
+        }
+      },
+    );
 
     // USER DASHBOARD
     app.get(
@@ -635,7 +646,7 @@ async function run() {
     app.get(
       "/api/user/purchases/:email",
       verifyToken,
-      verifyRole(["user", "admin","artist"]),
+      verifyRole(["user", "admin", "artist"]),
       async (req, res) => {
         try {
           const email = req.params.email;
@@ -811,32 +822,39 @@ async function run() {
     );
 
     // PROFILE CONTROL
-    app.put("/api/user/profile/:email", 
-      verifyToken, 
-      verifyRole(["user","artist","admin"]), async (req, res) => {
-      try {
-        if (req.user.email !== req.params.email) {
-          return res
-            .status(403)
-            .send({ message: "Unauthorized mutation vector." });
+    app.put(
+      "/api/user/profile/:email",
+      verifyToken,
+      verifyRole(["user", "artist", "admin"]),
+      async (req, res) => {
+        try {
+          if (req.user.email !== req.params.email) {
+            return res
+              .status(403)
+              .send({ message: "Unauthorized mutation vector." });
+          }
+          const filter = { email: req.params.email };
+          const updatedProfile = {
+            $set: {
+              name: req.body.name,
+              image: req.body.image,
+              bio: req.body.bio,
+              phoneNumber: req.body.phoneNumber,
+            },
+          };
+          const result = await usersCollection.updateOne(
+            filter,
+            updatedProfile,
+            {
+              upsert: true,
+            },
+          );
+          res.send(result);
+        } catch (error) {
+          res.status(500).send({ message: "Error updating account nodes." });
         }
-        const filter = { email: req.params.email };
-        const updatedProfile = {
-          $set: {
-            name: req.body.name,
-            image: req.body.image,
-            bio: req.body.bio,
-            phoneNumber: req.body.phoneNumber,
-          },
-        };
-        const result = await usersCollection.updateOne(filter, updatedProfile, {
-          upsert: true,
-        });
-        res.send(result);
-      } catch (error) {
-        res.status(500).send({ message: "Error updating account nodes." });
-      }
-    });
+      },
+    );
 
     // ADMIN DASHBOARD
     app.get(
