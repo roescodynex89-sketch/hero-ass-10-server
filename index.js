@@ -41,8 +41,7 @@ const JWKS = createRemoteJWKSet(new URL(process.env.BETTER_AUTH_JWKS_URI));
 app.use(express.json());
 app.use(cookieParser());
 
-// Better Auth Standard Middlewares
-// ==========================================
+// -----------Better Auth Standard Middlewares-------------
 
 // verifytoken
 
@@ -118,8 +117,7 @@ function verifyRole(allowedRoles) {
 }
 
 // ==========================================
-// ROUTES & CORE PIPELINE
-// ====================================================================================
+// ---------ROUTES & CORE PIPELINE-------------
 
 async function run() {
   try {
@@ -258,13 +256,9 @@ async function run() {
       }
     });
 
+    // --------------------------------------------------------------
 
-
-
-// ------------------------------------------------------------------
-
-
-// STRIPE CHECKOUT SESSION
+    // STRIPE CHECKOUT SESSION
     app.post(
       "/api/create-checkout-session",
       verifyToken,
@@ -309,7 +303,6 @@ async function run() {
             success_url: `${process.env.CLIENT_URL}/purchase-success?artworkId=${artworkId}`,
 
             cancel_url: `${process.env.CLIENT_URL}/artworks/${artworkId}?canceled=true`,
-          
           });
 
           res.send({ url: session.url });
@@ -400,28 +393,26 @@ async function run() {
       }
     });
 
-
-
-
-// SUBSCRIPTION CHECKOUT SESSION (EXPRESS BACKEND)
+    // SUBSCRIPTION CHECKOUT SESSION (EXPRESS BACKEND)
     app.post(
       "/api/create-subscription-checkout",
       verifyToken,
       async (req, res) => {
         try {
           const { planName } = req.body;
-          const userEmail = req.user.email; 
+          const userEmail = req.user.email;
 
-          
           let priceId = "";
           if (planName.toLowerCase() === "pro") {
-            priceId = "price_1TkMLsAm4G5oPHojlcJOSv8N"; 
+            priceId = "price_1TkMLsAm4G5oPHojlcJOSv8N";
           } else if (planName.toLowerCase() === "premium") {
-            priceId = "price_1TkMLsAm4G5oPHojlcJOSv8N"; 
+            priceId = "price_1TkMLsAm4G5oPHojlcJOSv8N";
           }
 
           if (!priceId) {
-            return res.status(400).send({ message: "Invalid plan name or missing Price ID" });
+            return res
+              .status(400)
+              .send({ message: "Invalid plan name or missing Price ID" });
           }
 
           const session = await stripe.checkout.sessions.create({
@@ -436,13 +427,17 @@ async function run() {
           res.send({ url: session.url });
         } catch (error) {
           console.error("Stripe Subscription Error:", error);
-          res.status(500).send({ message: "Stripe subscription session failed", error: error.message });
+          res
+            .status(500)
+            .send({
+              message: "Stripe subscription session failed",
+              error: error.message,
+            });
         }
-      }
+      },
     );
 
-
-// --------------------------------------------------------------------
+    // --------------------------------------------------------------------
 
     // COMMENTS ROUTE
     app.get("/api/comments/:artworkId", async (req, res) => {
@@ -829,7 +824,7 @@ async function run() {
       },
     );
 
-    // ADMIN DASHBOARD
+    // -------ADMIN DASHBOARD-----------------------
     app.get(
       "/api/admin/stats",
       verifyToken,
@@ -923,7 +918,7 @@ async function run() {
       verifyRole(["admin"]),
       async (req, res) => {
         try {
-          const query = { _id: new ObjectId(req.params.id) };
+          const query = { _id: req.params.id };
           const result = await artworksCollection.deleteOne(query);
           res.send(result);
         } catch (error) {
