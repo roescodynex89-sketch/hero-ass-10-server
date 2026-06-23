@@ -13,7 +13,7 @@ const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 // CORS Config
 app.use(
   cors({
-    origin: ["http://localhost:3000", process.env.CLIENT_URL],
+    origin: process.env.CLIENT_URL,
     credentials: true,
   }),
 );
@@ -947,10 +947,10 @@ async function run() {
       },
     );
 
-    await client.db("admin").command({ ping: 1 });
-    console.log(
-      "🎯 Successfully linked to ArtHub Central Clusters on MongoDB!",
-    );
+    // await client.db("admin").command({ ping: 1 });
+    // console.log(
+    //   "🎯 Successfully linked to ArtHub Central Clusters on MongoDB!",
+    // );
   } finally {
     // Pipeline online
   }
