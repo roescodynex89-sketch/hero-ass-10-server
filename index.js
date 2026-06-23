@@ -427,12 +427,10 @@ async function run() {
           res.send({ url: session.url });
         } catch (error) {
           console.error("Stripe Subscription Error:", error);
-          res
-            .status(500)
-            .send({
-              message: "Stripe subscription session failed",
-              error: error.message,
-            });
+          res.status(500).send({
+            message: "Stripe subscription session failed",
+            error: error.message,
+          });
         }
       },
     );
@@ -801,7 +799,8 @@ async function run() {
               .status(403)
               .send({ message: "Unauthorized mutation vector." });
           }
-          const filter = { email: req.params.email };
+          // const filter = { email: req.params.email };
+          const filter = { _id: new ObjectId(req.user.id) };
           const updatedProfile = {
             $set: {
               name: req.body.name,
@@ -814,7 +813,7 @@ async function run() {
             filter,
             updatedProfile,
             {
-              upsert: true,
+              upsert: false,
             },
           );
           res.send(result);
